@@ -6,7 +6,6 @@
   "permissions": [
     "notifications",
     "clipboardWrite",
-    "clipboardRead",
     "alarms",
     "storage",
     "tabs"

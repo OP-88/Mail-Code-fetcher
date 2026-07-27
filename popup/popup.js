@@ -42,10 +42,10 @@ const RING_CIRCUMFERENCE = 314.16; // 2π × 50
 const WIPE_DURATION_MS   = 60000;
 
 /**
- * TODO: Replace this URL with your actual LemonSqueezy product checkout URL.
- * Get it from: app.lemonsqueezy.com → Products → [your product] → Share
+ * LemonSqueezy checkout URL — set once approved and product is live.
+ * Leave as null for the free-tier v1 release; the buy button auto-hides.
  */
-const LEMON_CHECKOUT_URL = "https://store.lemonsqueezy.com/buy/YOUR_PRODUCT_VARIANT_ID";
+const LEMON_CHECKOUT_URL = null; // TODO: paste your lemonsqueezy.com checkout URL here
 
 /* ─── State ─────────────────────────────────────────────────────────────── */
 let countdownInterval = null;
@@ -151,7 +151,13 @@ function renderLicensePanel(licenseValid) {
     licensePaidState.classList.add("hidden");
     licenseStatusBadge.textContent = "FREE TIER";
     licenseStatusBadge.className = "tier-badge free";
-    buyLicenseBtn.href = LEMON_CHECKOUT_URL;
+    if (LEMON_CHECKOUT_URL) {
+      buyLicenseBtn.href = LEMON_CHECKOUT_URL;
+      buyLicenseBtn.classList.remove("hidden");
+    } else {
+      // No checkout URL yet — hide the buy button for free-tier v1 release
+      buyLicenseBtn.classList.add("hidden");
+    }
   }
 }
 

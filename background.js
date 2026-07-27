@@ -174,12 +174,12 @@ async function executeCodePipeline(code, tabId) {
     console.warn("[CodeFetcher] Clipboard relay to tab failed:", err);
   }
 
-  // OS Notification
+  // OS Notification — show masked code only, never plaintext in notification centre
   await browser.notifications.create("CODE_NOTIFICATION", {
     type: "basic",
     iconUrl: browser.runtime.getURL("assets/icon-128.png"),
     title: "🔐 Security Code Copied",
-    message: `Code [ ${code} ] is in your clipboard. Auto-erases in 60 seconds.`,
+    message: `Code [ ${maskCode(code)} ] is in your clipboard. Auto-erases in 60 seconds.`,
   });
 
   // Clear any previous alarm and schedule the 60-second wipe
@@ -215,15 +215,16 @@ browser.runtime.onMessage.addListener((message, sender) => {
         return;
       }
 
-      const code = extractToken(message.payload);
+      const code = extractToken(message.payload.slice(0, 20000)); // Hard cap: 20KB max
       if (code) await executeCodePipeline(code, sender.tab.id);
     })();
   }
 
-  // ── SIMULATE_OTP (from popup test button — bypasses origin check) ───────
+  // ── SIMULATE_OTP (from popup test button — extension-internal only) ────
   if (message.type === "SIMULATE_OTP") {
+    // Security: reject if caller has a tab (i.e. came from a web page, not popup)
+    if (sender.tab) return;
     return (async () => {
-      // Find the first open Gmail / Outlook tab to relay the clipboard write
       const tabs = await browser.tabs.query({
         url: [...AUTHORIZED_DOMAINS.map((d) => d + "*")],
       });
@@ -300,7 +301,12 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
   // ── SAVE_ACCOUNTS (from popup) ──────────────────────────────────────────
   if (message.type === "SAVE_ACCOUNTS") {
-    return browser.storage.local.set({ monitoredAccounts: message.accounts });
+    // Sanitise: only accept an array of strings that look like email addresses
+    if (!Array.isArray(message.accounts)) return;
+    const safe = message.accounts
+      .filter((a) => typeof a === "string" && a.includes("@") && a.length < 254)
+      .map((a) => a.trim().toLowerCase().slice(0, 253));
+    return browser.storage.local.set({ monitoredAccounts: safe });
   }
 });
 

@@ -1,0 +1,12 @@
+# OS / Editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Firefox extension build artifacts
+web-ext-artifacts/
+*.zip
+*.xpi
