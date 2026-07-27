@@ -241,7 +241,7 @@ async function activateLicense() {
     });
 
     if (result.valid) {
-      setFeedback("✓ License activated successfully!", "success");
+      setFeedback("License activated successfully!", "success");
       setTimeout(() => {
         renderLicensePanel(true);
         // Refresh accounts panel to show paid tier
@@ -279,7 +279,7 @@ async function simulateOTP() {
     console.warn("[CodeFetcher Popup] Simulate OTP failed:", err);
   } finally {
     testBtn.disabled = false;
-    testBtn.textContent = "⚡ Simulate Detection";
+    testBtn.textContent = "Simulate Detection";
   }
 }
 

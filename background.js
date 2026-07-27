@@ -160,8 +160,8 @@ function extractToken(text) {
 ══════════════════════════════════════════════════════════════════════════════ */
 
 function maskCode(code) {
-  if (code.length <= 4) return "●".repeat(code.length - 2) + code.slice(-2);
-  return "●".repeat(code.length - 4) + code.slice(-4);
+  if (code.length <= 4) return "*".repeat(code.length - 2) + code.slice(-2);
+  return "*".repeat(code.length - 4) + code.slice(-4);
 }
 
 async function executeCodePipeline(code, tabId) {
@@ -184,7 +184,7 @@ async function executeCodePipeline(code, tabId) {
   await browser.notifications.create("CODE_NOTIFICATION", {
     type: "basic",
     iconUrl: browser.runtime.getURL("assets/icon-128.png"),
-    title: "🔐 Security Code Copied",
+    title: "Security Code Copied",
     message: `Code [ ${maskCode(code)} ] is in your clipboard. Auto-erases in 60 seconds.`,
   });
 
