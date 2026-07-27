@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Air-Gapped Mail Code Fetcher",
+  "version": "1.0.0",
+  "description": "Zero-trust, auto-wiping 2FA/OTP code fetcher for Gmail & Outlook. Codes auto-erase from clipboard in 60s.",
+  "permissions": [
+    "notifications",
+    "clipboardWrite",
+    "clipboardRead",
+    "alarms",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://outlook.live.com/*",
+    "https://outlook.office.com/*",
+    "https://outlook.office365.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://mail.google.com/*",
+        "https://outlook.live.com/*",
+        "https://outlook.office.com/*",
+        "https://outlook.office365.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "128": "assets/icon-128.png"
+    }
+  },
+  "icons": {
+    "128": "assets/icon-128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self' https://api.lemonsqueezy.com;"
+  }
+}
