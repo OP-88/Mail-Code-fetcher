@@ -144,7 +144,13 @@ const CODE_PATTERNS = [
 function extractToken(text) {
   for (const pattern of CODE_PATTERNS) {
     const match = text.match(pattern);
-    if (match?.[1]) return match[1].toUpperCase();
+    if (match?.[1]) {
+      const token = match[1].toUpperCase();
+      // Real OTPs always contain at least one digit.
+      // This prevents keyword words like "CODE", "AUTH", "LOGIN" being
+      // captured as the token when they appear right after a keyword match.
+      if (/\d/.test(token)) return token;
+    }
   }
   return null;
 }
@@ -203,6 +209,17 @@ browser.runtime.onMessage.addListener((message, sender) => {
     if (!isValidOrigin) return;
 
     return (async () => {
+      // Background-side active-code guard:
+      // If we already have a live code in session storage that hasn't expired,
+      // skip processing entirely. This prevents the MutationObserver (which fires
+      // continuously on Gmail/Outlook DOM updates) from resetting the alarm and
+      // firing repeat notifications for the same email.
+      const existing = await browser.storage.session.get(["pendingCode", "codeDetectedAt"]);
+      if (existing.pendingCode && existing.codeDetectedAt) {
+        const elapsed = Date.now() - existing.codeDetectedAt;
+        if (elapsed < 60000) return; // Active code still running — do nothing
+      }
+
       // Security Gate 3: Account limit
       const limit = await checkAccountLimit();
       if (!limit.allowed) {
@@ -215,7 +232,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
         return;
       }
 
-      const code = extractToken(message.payload.slice(0, 20000)); // Hard cap: 20KB max
+      const code = extractToken(message.payload.slice(0, 20000));
       if (code) await executeCodePipeline(code, sender.tab.id);
     })();
   }

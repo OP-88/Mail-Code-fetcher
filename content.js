@@ -51,8 +51,10 @@ function scanWebmailDOM() {
     const now = Date.now();
     const signature = rawText.slice(0, 120); // Snapshot for deduplication
 
-    // Deduplicate: same content within 30s is skipped
-    if (signature === lastSignature && now - lastTimestamp < 30000) return;
+    // Deduplicate: same content within 90s is skipped.
+    // Must be longer than the 60s alarm wipe window — otherwise the MutationObserver
+    // re-triggers the pipeline before the alarm fires, resetting it indefinitely.
+    if (signature === lastSignature && now - lastTimestamp < 90000) return;
 
     lastSignature = signature;
     lastTimestamp = now;
