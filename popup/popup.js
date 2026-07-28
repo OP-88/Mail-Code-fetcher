@@ -100,7 +100,7 @@ function showActiveState(status) {
 }
 
 function renderAccounts(accounts, licenseValid) {
-  accountsList.innerHTML = "";
+  accountsList.replaceChildren(); // safe clear — no innerHTML
 
   accounts.forEach((email, index) => {
     const li = document.createElement("li");
@@ -118,7 +118,21 @@ function renderAccounts(accounts, licenseValid) {
     const removeBtn = document.createElement("button");
     removeBtn.className = "account-remove-btn";
     removeBtn.setAttribute("aria-label", `Remove ${email}`);
-    removeBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+    // Build SVG safely via DOM API (avoids innerHTML linter warning)
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("width", "13"); svg.setAttribute("height", "13");
+    svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "2.5");
+    svg.setAttribute("stroke-linecap", "round"); svg.setAttribute("aria-hidden", "true");
+    const l1 = document.createElementNS(svgNS, "line");
+    l1.setAttribute("x1","18"); l1.setAttribute("y1","6");
+    l1.setAttribute("x2","6");  l1.setAttribute("y2","18");
+    const l2 = document.createElementNS(svgNS, "line");
+    l2.setAttribute("x1","6");  l2.setAttribute("y1","6");
+    l2.setAttribute("x2","18"); l2.setAttribute("y2","18");
+    svg.appendChild(l1); svg.appendChild(l2);
+    removeBtn.appendChild(svg);
     removeBtn.addEventListener("click", () => removeAccount(index));
 
     li.appendChild(dot);

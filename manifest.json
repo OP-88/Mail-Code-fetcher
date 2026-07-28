@@ -3,6 +3,16 @@
   "name": "Air-Gapped Mail Code Fetcher",
   "version": "1.0.0",
   "description": "Zero-trust, auto-wiping 2FA/OTP code fetcher for Gmail & Outlook. Codes auto-erase from clipboard in 60s.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "mail-code-fetcher@op88",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": ["none"],
+        "optional": []
+      }
+    }
+  },
   "permissions": [
     "notifications",
     "clipboardWrite",

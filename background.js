@@ -18,6 +18,8 @@
 
 "use strict";
 
+console.log("[MCF] background.js loaded — Mail Code Fetcher v1.0.0");
+
 /* ═══════════════════════════════════════════════════════════════════════════
    CONSTANTS
 ══════════════════════════════════════════════════════════════════════════════ */
@@ -30,6 +32,54 @@ const AUTHORIZED_DOMAINS = [
 ];
 
 const FREE_TIER_ACCOUNT_LIMIT = 1;
+const SESSION_TTL_MS = 70000; // 70s — slightly longer than the 60s wipe alarm
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SESSION STORAGE SHIM
+   browser.storage.session requires Firefox 109+. For older builds we
+   fall back to storage.local with a manual TTL check.
+══════════════════════════════════════════════════════════════════════════════ */
+
+const session = {
+  async set(obj) {
+    try {
+      await browser.storage.session.set(obj);
+    } catch {
+      // Fallback: store in local with a timestamp prefix so we can expire it
+      const wrapped = {};
+      for (const [k, v] of Object.entries(obj)) wrapped[`_sess_${k}`] = v;
+      wrapped._sess_ts = Date.now();
+      await browser.storage.local.set(wrapped);
+    }
+  },
+  async get(keys) {
+    try {
+      return await browser.storage.session.get(keys);
+    } catch {
+      const prefixed = (Array.isArray(keys) ? keys : [keys]).map(k => `_sess_${k}`);
+      const raw = await browser.storage.local.get([...prefixed, "_sess_ts"]);
+      // Expire after TTL
+      if (raw._sess_ts && Date.now() - raw._sess_ts > SESSION_TTL_MS) {
+        await browser.storage.local.remove([...prefixed, "_sess_ts"]);
+        return {};
+      }
+      const out = {};
+      for (const k of (Array.isArray(keys) ? keys : [keys])) {
+        if (`_sess_${k}` in raw) out[k] = raw[`_sess_${k}`];
+      }
+      return out;
+    }
+  },
+  async remove(keys) {
+    try {
+      await browser.storage.session.remove(keys);
+    } catch {
+      const prefixed = (Array.isArray(keys) ? keys : [keys]).map(k => `_sess_${k}`);
+      await browser.storage.local.remove(prefixed);
+    }
+  },
+};
+
 
 /* ═══════════════════════════════════════════════════════════════════════════
    LEMONSQUEEZY LICENSE VALIDATION
@@ -165,8 +215,10 @@ function maskCode(code) {
 }
 
 async function executeCodePipeline(code, tabId) {
-  // Persist ephemeral state — session storage survives SW restart but clears on browser close
-  await browser.storage.session.set({
+  console.log(`[MCF] executeCodePipeline — code: ${maskCode(code)}, tabId: ${tabId}`);
+
+  // Persist ephemeral state via shim (works Firefox 109+ natively, falls back otherwise)
+  await session.set({
     pendingCode: code,
     pendingMasked: maskCode(code),
     codeDetectedAt: Date.now(),
@@ -174,23 +226,30 @@ async function executeCodePipeline(code, tabId) {
   });
 
   // Relay clipboard write to content script in the source tab (MV3 workaround)
-  try {
-    await browser.tabs.sendMessage(tabId, { type: "WRITE_CLIPBOARD", text: code });
-  } catch (err) {
-    console.warn("[CodeFetcher] Clipboard relay to tab failed:", err);
+  if (tabId !== null && tabId !== undefined) {
+    try {
+      await browser.tabs.sendMessage(tabId, { type: "WRITE_CLIPBOARD", text: code });
+      console.log("[MCF] Clipboard write relayed to content script OK");
+    } catch (err) {
+      console.warn("[MCF] Clipboard relay to tab failed:", err.message);
+    }
+  } else {
+    console.warn("[MCF] No tabId available for clipboard relay");
   }
 
-  // OS Notification — show masked code only, never plaintext in notification centre
+  // OS Notification — masked code only
   await browser.notifications.create("CODE_NOTIFICATION", {
     type: "basic",
     iconUrl: browser.runtime.getURL("assets/icon-128.png"),
     title: "Security Code Copied",
     message: `Code [ ${maskCode(code)} ] is in your clipboard. Auto-erases in 60 seconds.`,
   });
+  console.log("[MCF] Notification created");
 
   // Clear any previous alarm and schedule the 60-second wipe
   await browser.alarms.clear("EPHEMERAL_WIPE_ALARM");
   browser.alarms.create("EPHEMERAL_WIPE_ALARM", { delayInMinutes: 1.0 });
+  console.log("[MCF] Wipe alarm set for 60s");
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -201,28 +260,36 @@ browser.runtime.onMessage.addListener((message, sender) => {
   // ── PARSE_EMAIL_PAYLOAD (from content scripts) ──────────────────────────
   if (message.type === "PARSE_EMAIL_PAYLOAD") {
     // Security Gate 1: Must be from this extension
-    if (sender.id !== browser.runtime.id) return;
+    if (sender.id !== browser.runtime.id) {
+      console.warn("[MCF] Rejected message — wrong sender.id:", sender.id);
+      return;
+    }
 
     // Security Gate 2: Must originate from an authorised domain
     const senderUrl = sender.tab?.url || "";
     const isValidOrigin = AUTHORIZED_DOMAINS.some((d) => senderUrl.startsWith(d));
-    if (!isValidOrigin) return;
+    if (!isValidOrigin) {
+      console.warn("[MCF] Rejected message — invalid origin:", senderUrl);
+      return;
+    }
+
+    console.log("[MCF] PARSE_EMAIL_PAYLOAD received from:", senderUrl);
 
     return (async () => {
-      // Background-side active-code guard:
-      // If we already have a live code in session storage that hasn't expired,
-      // skip processing entirely. This prevents the MutationObserver (which fires
-      // continuously on Gmail/Outlook DOM updates) from resetting the alarm and
-      // firing repeat notifications for the same email.
-      const existing = await browser.storage.session.get(["pendingCode", "codeDetectedAt"]);
+      // Background-side active-code guard
+      const existing = await session.get(["pendingCode", "codeDetectedAt"]);
       if (existing.pendingCode && existing.codeDetectedAt) {
         const elapsed = Date.now() - existing.codeDetectedAt;
-        if (elapsed < 60000) return; // Active code still running — do nothing
+        if (elapsed < 60000) {
+          console.log(`[MCF] Active code still running (${Math.round(elapsed/1000)}s elapsed) — skipping`);
+          return;
+        }
       }
 
       // Security Gate 3: Account limit
       const limit = await checkAccountLimit();
       if (!limit.allowed) {
+        console.log("[MCF] Account limit reached — prompting upgrade");
         await browser.notifications.create("UPGRADE_NOTIFICATION", {
           type: "basic",
           iconUrl: browser.runtime.getURL("assets/icon-128.png"),
@@ -233,20 +300,24 @@ browser.runtime.onMessage.addListener((message, sender) => {
       }
 
       const code = extractToken(message.payload.slice(0, 20000));
+      console.log("[MCF] extractToken result:", code ? maskCode(code) : "null (no match)");
       if (code) await executeCodePipeline(code, sender.tab.id);
     })();
   }
 
   // ── SIMULATE_OTP (from popup test button — extension-internal only) ────
   if (message.type === "SIMULATE_OTP") {
-    // Security: reject if caller has a tab (i.e. came from a web page, not popup)
-    if (sender.tab) return;
+    if (sender.tab) {
+      console.warn("[MCF] SIMULATE_OTP rejected — came from a tab, not popup");
+      return;
+    }
     return (async () => {
       const tabs = await browser.tabs.query({
         url: [...AUTHORIZED_DOMAINS.map((d) => d + "*")],
       });
       const testCode = String(Math.floor(100000 + Math.random() * 900000));
       const tabId = tabs[0]?.id ?? null;
+      console.log("[MCF] SIMULATE_OTP — code:", testCode, "tabId:", tabId);
       await executeCodePipeline(testCode, tabId);
       return { code: testCode };
     })();
@@ -262,6 +333,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
           licenseValid: true,
           licenseInstanceId: result.instanceId,
         });
+        console.log("[MCF] License activated and stored");
       }
       return result;
     })();
@@ -270,7 +342,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
   // ── GET_STATUS (from popup) ─────────────────────────────────────────────
   if (message.type === "GET_STATUS") {
     return (async () => {
-      const session = await browser.storage.session.get([
+      const sess = await session.get([
         "pendingCode",
         "pendingMasked",
         "codeDetectedAt",
@@ -283,15 +355,15 @@ browser.runtime.onMessage.addListener((message, sender) => {
       ]);
 
       const now = Date.now();
-      const elapsed = session.codeDetectedAt ? now - session.codeDetectedAt : 60001;
+      const elapsed = sess.codeDetectedAt ? now - sess.codeDetectedAt : 60001;
       const remainingMs = Math.max(0, 60000 - elapsed);
 
       return {
-        hasCode: !!session.pendingCode && remainingMs > 0,
-        maskedCode: session.pendingMasked || null,
-        detectedAt: session.codeDetectedAt || null,
+        hasCode: !!sess.pendingCode && remainingMs > 0,
+        maskedCode: sess.pendingMasked || null,
+        detectedAt: sess.codeDetectedAt || null,
         remainingMs,
-        codeTabId: session.codeTabId || null,
+        codeTabId: sess.codeTabId || null,
         accounts: local.monitoredAccounts || [],
         licenseValid: local.licenseValid || false,
         hasLicenseKey: !!local.licenseKey,
@@ -302,12 +374,12 @@ browser.runtime.onMessage.addListener((message, sender) => {
   // ── COPY_AGAIN (from popup) ─────────────────────────────────────────────
   if (message.type === "COPY_AGAIN") {
     return (async () => {
-      const session = await browser.storage.session.get(["pendingCode", "codeTabId"]);
-      if (!session.pendingCode || !session.codeTabId) return { ok: false };
+      const sess = await session.get(["pendingCode", "codeTabId"]);
+      if (!sess.pendingCode || !sess.codeTabId) return { ok: false };
       try {
-        await browser.tabs.sendMessage(session.codeTabId, {
+        await browser.tabs.sendMessage(sess.codeTabId, {
           type: "WRITE_CLIPBOARD",
-          text: session.pendingCode,
+          text: sess.pendingCode,
         });
         return { ok: true };
       } catch {
@@ -318,7 +390,6 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
   // ── SAVE_ACCOUNTS (from popup) ──────────────────────────────────────────
   if (message.type === "SAVE_ACCOUNTS") {
-    // Sanitise: only accept an array of strings that look like email addresses
     if (!Array.isArray(message.accounts)) return;
     const safe = message.accounts
       .filter((a) => typeof a === "string" && a.includes("@") && a.length < 254)
@@ -333,28 +404,23 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
 browser.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== "EPHEMERAL_WIPE_ALARM") return;
+  console.log("[MCF] EPHEMERAL_WIPE_ALARM fired — wiping clipboard and session");
 
-  const session = await browser.storage.session.get(["codeTabId"]);
-  if (session.codeTabId) {
+  const sess = await session.get(["codeTabId"]);
+  if (sess.codeTabId) {
     try {
-      // Send empty string to content script — overwrites clipboard with nothing
-      await browser.tabs.sendMessage(session.codeTabId, {
+      await browser.tabs.sendMessage(sess.codeTabId, {
         type: "WRITE_CLIPBOARD",
         text: "",
       });
+      console.log("[MCF] Clipboard wiped via content script");
     } catch {
-      // Tab likely closed — no action needed
+      console.log("[MCF] Wipe relay skipped — tab likely closed");
     }
   }
 
-  // Dereference all ephemeral data from session storage
-  await browser.storage.session.remove([
-    "pendingCode",
-    "pendingMasked",
-    "codeDetectedAt",
-    "codeTabId",
-  ]);
-
-  // Update badge to clear active indicator
+  // Dereference all ephemeral data
+  await session.remove(["pendingCode", "pendingMasked", "codeDetectedAt", "codeTabId"]);
   browser.action.setBadgeText({ text: "" }).catch(() => {});
+  console.log("[MCF] Session cleared");
 });
