@@ -175,41 +175,37 @@ async function checkAccountLimit() {
 /* ═══════════════════════════════════════════════════════════════════════════
    TOKEN EXTRACTION ENGINE
    Six-pass RegEx, ordered specificity → breadth.
-   All patterns capture only digit-containing tokens (real OTPs always have digits).
+   Captures alphanumeric codes 4-20 chars (letters + digits combined).
+   The digit check ensures we never return a plain English word.
 ══════════════════════════════════════════════════════════════════════════════ */
 
 const CODE_PATTERNS = [
   // P1 — keyword anywhere before the code, up to 120 chars of any text in between.
-  //      Handles all variants: "code: 123456", "code is 123456", "code is: 123456",
-  //      "verification code for your account: 123456", "OTP\n123456", etc.
-  /(?:code|otp|one.time|verification|security\s*code|auth(?:entication)?)[^]{0,120}?(\d{4,8})/i,
+  //      Handles: "code: A1B2C3", "verification code is: 45434363", "OTP\nXY9Z12" etc.
+  /(?:code|otp|one.time|verification|security\s*code|auth(?:entication)?)[^]{0,120}?([A-Z0-9]{4,20})/i,
 
-  // P2 — standalone number on its own line (most common Gmail/Outlook format:
-  //      big centred 6-digit code in the email body).
-  /(?:^|\n)\s*(\d{6})\s*(?:\n|$)/m,
+  // P2 — standalone 4-8 digit number on its own line (big centred code in email body).
+  //      Kept as digit-only to avoid matching random words on isolated lines.
+  /(?:^|\n)\s*(\d{4,8})\s*(?:\n|$)/m,
 
-  // P3 — trailing keyword: "123456 is your verification code" / "123456 — OTP"
-  /\b(\d{4,8})\b\s+(?:is\s+(?:your|the)|as\s+your)\s+(?:code|otp|verification|pin|password)/i,
+  // P3 — trailing keyword: "A1B2C3 is your verification code"
+  /\b([A-Z0-9]{4,20})\b\s+(?:is\s+(?:your|the)|as\s+your)\s+(?:code|otp|verification|pin|password)/i,
 
-  // P4 — action verb before number: "enter 123456", "use code 123456", "type: 123456"
-  /(?:enter|use|type|submit|input)\s+(?:(?:the|your|this|code)\s+)?(\d{4,8})\b/i,
+  // P4 — action verb before code: "enter A1B2C3", "use code XY9Z12"
+  /(?:enter|use|type|submit|input)\s+(?:(?:the|your|this|code)\s+)?([A-Z0-9]{4,20})\b/i,
 
-  // P5 — expiry indicator near number: "123456 expires in", "valid: 123456"
-  /\b(\d{4,8})\b[^\n]{0,40}(?:expir|valid|minute)/i,
+  // P5 — expiry/valid indicator near code: "A1B2C3 expires in 15 minutes"
+  /\b([A-Z0-9]{4,20})\b[^\n]{0,40}(?:expir|valid|minute)/i,
 
-  // P6 — safe broad fallback: isolated 6-digit number (only reached if all above fail).
-  //      6 digits is the global standard length for TOTP/SMS codes.
+  // P6 — safe broad fallback: isolated 6-digit number (standard TOTP/SMS length).
   /\b(\d{6})\b/,
 ];
 
 function extractToken(text) {
-  // Log a sample so we can see what text the email body contains
-  console.log("[MCF] Payload sample (first 600 chars):\n" + text.slice(0, 600).replace(/\n/g, " | "));
-
   for (let i = 0; i < CODE_PATTERNS.length; i++) {
     const match = text.match(CODE_PATTERNS[i]);
     if (match?.[1] && /\d/.test(match[1])) {
-      console.log(`[MCF] Matched on pattern P${i + 1}: "${match[1]}"`);
+      console.log(`[MCF] Matched on pattern P${i + 1}: "${maskCode(match[1])}"`);
       return match[1].toUpperCase();
     }
   }
