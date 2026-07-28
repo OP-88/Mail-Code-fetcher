@@ -285,7 +285,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
     console.log("[MCF] PARSE_EMAIL_PAYLOAD received from:", senderUrl);
 
     return (async () => {
-      // Background-side active-code guard
+      // Gate A — active-code guard (session-level, clears on alarm)
       const existing = await session.get(["pendingCode", "codeDetectedAt"]);
       if (existing.pendingCode && existing.codeDetectedAt) {
         const elapsed = Date.now() - existing.codeDetectedAt;
@@ -293,6 +293,17 @@ browser.runtime.onMessage.addListener((message, sender) => {
           console.log(`[MCF] Active code still running (${Math.round(elapsed/1000)}s elapsed) — skipping`);
           return;
         }
+      }
+
+      // Gate B — payload fingerprint dedup (survives extension reloads).
+      // Prevents re-notifying when the background restarts while the same
+      // email is still open and the content script re-sends the payload.
+      const fingerprint = message.payload.slice(0, 120);
+      const fpData = await browser.storage.local.get(["_fpSig", "_fpTs"]);
+      const FP_TTL = 5 * 60 * 1000; // 5 minutes
+      if (fpData._fpSig === fingerprint && fpData._fpTs && (Date.now() - fpData._fpTs) < FP_TTL) {
+        console.log("[MCF] Payload fingerprint already processed — skipping (reload guard)");
+        return;
       }
 
       // Security Gate 3: Account limit
@@ -310,7 +321,11 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
       const code = extractToken(message.payload.slice(0, 20000));
       console.log("[MCF] extractToken result:", code ? maskCode(code) : "null (no match)");
-      if (code) await executeCodePipeline(code, sender.tab.id);
+      if (code) {
+        // Store fingerprint BEFORE pipeline so reload can't re-fire
+        await browser.storage.local.set({ _fpSig: fingerprint, _fpTs: Date.now() });
+        await executeCodePipeline(code, sender.tab.id);
+      }
     })();
   }
 
