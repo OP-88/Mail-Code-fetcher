@@ -177,36 +177,45 @@ async function checkAccountLimit() {
    Six-pass RegEx, ordered specificity → breadth.
    Captures alphanumeric codes 4-20 chars (letters + digits combined).
    The digit check ensures we never return a plain English word.
+   Uses exec() loop per pattern so ALL matches in the text are tried —
+   not just the first one (which may be a plain word like "Password").
 ══════════════════════════════════════════════════════════════════════════════ */
 
 const CODE_PATTERNS = [
   // P1 — keyword anywhere before the code, up to 120 chars of any text in between.
-  //      Handles: "code: A1B2C3", "verification code is: 45434363", "OTP\nXY9Z12" etc.
-  /(?:code|otp|one.time|verification|security\s*code|auth(?:entication)?)[^]{0,120}?([A-Z0-9]{4,20})/i,
+  //      Handles: "code: A1B2C3", "OTP is PJ8HZT", "verification code is: 45434363"
+  //      Uses exec loop: if first match is a word like "Password", tries next match.
+  /(?:code|otp|one.time|verification|security\s*code|auth(?:entication)?)[^]{0,120}?([A-Z0-9]{4,20})/gi,
 
-  // P2 — standalone 4-8 digit number on its own line (big centred code in email body).
-  //      Kept as digit-only to avoid matching random words on isolated lines.
-  /(?:^|\n)\s*(\d{4,8})\s*(?:\n|$)/m,
+  // P2 — standalone code on its own line (big centred code in email body).
+  //      Expanded to alphanumeric so "PJ8HZT" on its own line is caught.
+  //      Digit check guards against plain words like "Mark" or "Help".
+  /(?:^|\n)\s*([A-Z0-9]{4,20})\s*(?:\n|$)/gm,
 
   // P3 — trailing keyword: "A1B2C3 is your verification code"
-  /\b([A-Z0-9]{4,20})\b\s+(?:is\s+(?:your|the)|as\s+your)\s+(?:code|otp|verification|pin|password)/i,
+  /\b([A-Z0-9]{4,20})\b\s+(?:is\s+(?:your|the)|as\s+your)\s+(?:code|otp|verification|pin|password)/gi,
 
   // P4 — action verb before code: "enter A1B2C3", "use code XY9Z12"
-  /(?:enter|use|type|submit|input)\s+(?:(?:the|your|this|code)\s+)?([A-Z0-9]{4,20})\b/i,
+  /(?:enter|use|type|submit|input)\s+(?:(?:the|your|this|code)\s+)?([A-Z0-9]{4,20})\b/gi,
 
   // P5 — expiry/valid indicator near code: "A1B2C3 expires in 15 minutes"
-  /\b([A-Z0-9]{4,20})\b[^\n]{0,40}(?:expir|valid|minute)/i,
+  /\b([A-Z0-9]{4,20})\b[^\n]{0,40}(?:expir|valid|minute)/gi,
 
   // P6 — safe broad fallback: isolated 6-digit number (standard TOTP/SMS length).
-  /\b(\d{6})\b/,
+  /\b(\d{6})\b/g,
 ];
 
 function extractToken(text) {
   for (let i = 0; i < CODE_PATTERNS.length; i++) {
-    const match = text.match(CODE_PATTERNS[i]);
-    if (match?.[1] && /\d/.test(match[1])) {
-      console.log(`[MCF] Matched on pattern P${i + 1}: "${maskCode(match[1])}"`);
-      return match[1].toUpperCase();
+    // Reset lastIndex so exec() starts from the beginning of the text
+    CODE_PATTERNS[i].lastIndex = 0;
+    let match;
+    while ((match = CODE_PATTERNS[i].exec(text)) !== null) {
+      if (match[1] && /\d/.test(match[1])) {
+        const token = match[1].toUpperCase();
+        console.log(`[MCF] Matched on pattern P${i + 1}: "${maskCode(token)}"`);
+        return token;
+      }
     }
   }
   console.log("[MCF] extractToken: no pattern matched");
