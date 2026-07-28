@@ -69,11 +69,51 @@ function scanWebmailDOM() {
 
 /* --- Clipboard Relay ------------------------------------------------------ */
 // Background instructs us to write/wipe clipboard (MV3 workaround).
+// Uses two methods: modern Clipboard API first, textarea execCommand fallback.
+// The fallback is critical — navigator.clipboard.writeText() silently fails
+// when the tab loses focus during the async pipeline delay.
+
+function writeToClipboard(text) {
+  // Method 1: modern async Clipboard API
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      console.log("[MCF] Clipboard written via navigator.clipboard OK");
+    }).catch((err) => {
+      console.warn("[MCF] navigator.clipboard failed, trying execCommand fallback:", err.message);
+      execCommandCopy(text);
+    });
+  } else {
+    execCommandCopy(text);
+  }
+}
+
+function execCommandCopy(text) {
+  // Method 2: textarea + execCommand — works regardless of focus state
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;top:-9999px;left:-9999px;opacity:0;";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    if (ok) {
+      console.log("[MCF] Clipboard written via execCommand OK");
+    } else {
+      console.warn("[MCF] execCommand copy returned false — both methods failed");
+    }
+  } catch (err) {
+    console.error("[MCF] execCommand fallback threw:", err.message);
+  }
+}
+
 browser.runtime.onMessage.addListener((message) => {
   if (message.type === "WRITE_CLIPBOARD") {
-    navigator.clipboard.writeText(message.text ?? "").catch((err) => {
-      console.warn("[CodeFetcher] Clipboard relay write failed:", err);
-    });
+    const text = message.text ?? "";
+    console.log("[MCF] WRITE_CLIPBOARD received, length:", text.length);
+    writeToClipboard(text);
   }
 });
 
